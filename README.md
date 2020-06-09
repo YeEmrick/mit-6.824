@@ -1,0 +1,3 @@
+- [x] map  reduce
+- [ ] raft
+    - [x] leader election
