@@ -74,7 +74,8 @@ const (
 const (
 	TERM_PERIOD_MIN  = time.Millisecond * 300
 	TERM_PERIOD_MAX  = time.Millisecond * 600
-	HEARTBEAT_PERIOD = time.Millisecond * 150
+	HEARTBEAT_PERIOD = time.Millisecond * 10
+	APPLY_PERIOD     = time.Millisecond * 100
 	RPC_TIMEOUT      = time.Millisecond * 100
 )
 
@@ -100,10 +101,11 @@ type Raft struct {
 	termTimer       *time.Timer
 	heartbeatTimers []*time.Timer
 	termAction      chan int
+	applyCh         chan ApplyMsg
 
 	// Volatile State
 	commitIndex       int
-	lastApplied       int
+	lastAppliedIndex  int
 	lastSnapshotIndex int
 	lastSnapshotTerm  int
 
@@ -115,10 +117,6 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	// Your code here (2A).
-	rf.rwmu.RLock()
-	defer rf.rwmu.RUnlock()
-
 	return rf.currentTern, rf.role == LEADER
 }
 
@@ -134,7 +132,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.currentTern)
 	e.Encode(rf.votedFor)
 	e.Encode(rf.commitIndex)
-	e.Encode(rf.lastApplied)
+	e.Encode(rf.lastAppliedIndex)
 	e.Encode(rf.lastSnapshotIndex)
 	e.Encode(rf.lastSnapshotTerm)
 	e.Encode(rf.log)
@@ -146,22 +144,9 @@ func (rf *Raft) persist() {
 // restore previously persisted state.
 //
 func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
+	if data == nil || len(data) < 1 {
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var CurrentTerm int
@@ -181,7 +166,7 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.currentTern = CurrentTerm
 	rf.votedFor = VotedFor
 	rf.commitIndex = CommitIndex
-	rf.lastApplied = LastApplied
+	rf.lastAppliedIndex = LastApplied
 	rf.lastSnapshotIndex = LastSnapshotIndex
 	rf.lastSnapshotTerm = LastSnapshotTerm
 	rf.log = Log
@@ -222,7 +207,7 @@ func (rf *Raft) getLogByIndex(idx int) (Entry, bool) {
 }
 
 func (rf *Raft) PrintNow(info string) {
-	fmt.Printf("role:%v, Index:%v, Term:%v, info:%v\n", getRoleString(rf.role), rf.me, rf.currentTern, info)
+	fmt.Printf("role:%v, Index:%v, Term:%v, CommitIndex:%v, AppliedIndex:%v, info:%v\n", getRoleString(rf.role), rf.me, rf.currentTern, rf.commitIndex, rf.lastAppliedIndex, info)
 }
 
 //
@@ -240,12 +225,24 @@ func (rf *Raft) PrintNow(info string) {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.rwmu.Lock()
+	defer rf.rwmu.Unlock()
 	index := -1
-	term := -1
-	isLeader := true
-
-	// Your code here (2B).
-
+	term, isLeader := rf.GetState()
+	if isLeader {
+		rf.PrintNow(fmt.Sprintf("Start Command:%v", command))
+		lastIndex, _ := rf.lastLogIndexAndTerm()
+		index = lastIndex + 1
+		entry := Entry{
+			Index:   index,
+			Term:    term,
+			Command: command,
+		}
+		rf.log = append(rf.log, entry)
+		rf.nextIndex[rf.me] = index
+		rf.matchIndex[rf.me] = index - 1
+		//rf.persist()
+	}
 	return index, term, isLeader
 }
 
@@ -275,8 +272,11 @@ func (rf *Raft) runTerm() {
 	go func() {
 		for {
 			<-rf.termTimer.C
-			rf.PrintNow("OVER_TERM")
-			rf.termAction <- OVER_TERM
+			if rf.role != LEADER {
+				rf.PrintNow("OVER_TERM")
+				rf.termAction <- OVER_TERM
+			}
+			rf.resetTermClick()
 		}
 	}()
 	for {
@@ -297,6 +297,21 @@ func (rf *Raft) runTerm() {
 	}
 }
 
+func (rf *Raft) runApplyLog() {
+	for {
+		rf.rwmu.RLock()
+		if rf.lastAppliedIndex < rf.commitIndex {
+			rf.lastAppliedIndex++
+			log, find := rf.getLogByIndex(rf.lastAppliedIndex)
+			if find {
+				rf.applyCh <- ApplyMsg{CommandValid: true, CommandIndex: rf.lastAppliedIndex, Command: log.Command}
+			}
+		}
+		rf.rwmu.RUnlock()
+		time.Sleep(APPLY_PERIOD)
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -311,35 +326,40 @@ func (rf *Raft) runTerm() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		peers:     peers,
-		persister: persister,
-		me:        me,
+		peers:             peers,
+		persister:         persister,
+		me:                me,
+		lastSnapshotIndex: -1,
+		lastSnapshotTerm:  -1,
 	}
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.rwmu = sync.RWMutex{}
 	rf.currentTern = 0
+	rf.commitIndex = -1
+	rf.lastAppliedIndex = -1
 	rf.role = FOLLOWER
+	rf.applyCh = applyCh
 	rf.termAction = make(chan int, 1)
 	rf.persister = persister
 	rf.log = make([]Entry, 0)
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
-		rf.nextIndex[i] = 1
-		rf.matchIndex[i] = 0
+		rf.nextIndex[i] = -1
+		rf.matchIndex[i] = -1
 	}
 	// init Timer
 	rf.heartbeatTimers = make([]*time.Timer, len(rf.peers))
 	rf.termTimer = time.NewTimer(rf.randTermTimeout())
 	for i, _ := range rf.peers {
-		rf.heartbeatTimers[i] = time.NewTimer(time.Duration(HEARTBEAT_PERIOD))
+		rf.heartbeatTimers[i] = time.NewTimer(HEARTBEAT_PERIOD)
 	}
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	rf.termAction <- BEGIN_TERM
 	go rf.runTerm()
-
+	go rf.runApplyLog()
 	return rf
 }

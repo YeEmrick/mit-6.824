@@ -20,10 +20,12 @@ func (rf *Raft) beginTerm() {
 }
 
 func (rf *Raft) changeTermTo(role int) {
-	rf.PrintNow(fmt.Sprintf("changeTermTo:%v", getRoleString(role)))
-	rf.role = role
 	rf.resetTermClick()
-	rf.termAction <- BEGIN_TERM
+	if rf.role != role {
+		rf.PrintNow(fmt.Sprintf("changeTermTo:%v", getRoleString(role)))
+		rf.role = role
+		rf.termAction <- BEGIN_TERM
+	}
 }
 
 func (rf *Raft) endTerm() {
@@ -126,6 +128,7 @@ func (rf *Raft) leaderTerm() {
 				select {
 				case <-rf.heartbeatTimers[i].C:
 					rf.appendEntries(i)
+					rf.heartbeatTimers[i].Reset(HEARTBEAT_PERIOD)
 				}
 			}
 		}(idx)
@@ -139,5 +142,6 @@ func (rf *Raft) followerTerm() {
 
 func (rf *Raft) resetTermClick() {
 	rf.PrintNow("resetTermClick")
+	rf.termTimer.Stop()
 	rf.termTimer.Reset(rf.randTermTimeout())
 }
