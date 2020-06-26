@@ -19,7 +19,6 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
-	// Your data here (2A).
 	Term        int
 	VoteGranted bool
 }
@@ -31,14 +30,29 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.PrintNow(fmt.Sprintf("[RequestVote]Recive RequestVote from:%d, LastLogIndex:%d, LastLogTerm:%d", args.CandidateId, args.LastLogIndex, args.LastLogTerm))
 	// Your code here (2A, 2B).
 	rf.rwmu.Lock()
-	reply.VoteGranted = rf.up_to_date_or_eq(args.LastLogIndex, args.LastLogTerm) == false
+
+	// 检查Term
+	reply.VoteGranted = false
 	reply.Term = rf.currentTern
+	if args.Term < rf.currentTern {
+		rf.rwmu.Unlock()
+		return
+	}
+	if args.Term == rf.currentTern {
+		// leader不投票 || 已给其他候选人投票
+		if rf.role == LEADER || rf.votedFor != args.CandidateId {
+			rf.rwmu.Unlock()
+			return
+		}
+	}
+	reply.VoteGranted = rf.up_to_date(args.LastLogIndex, args.LastLogTerm) == false
 	if reply.VoteGranted {
 		rf.votedFor = args.CandidateId
 		rf.currentTern = args.Term
 		rf.changeTermTo(FOLLOWER)
 	}
 	rf.PrintNow(fmt.Sprintf("VoteGranted:%v, votedFor:%v", reply.VoteGranted, args.CandidateId))
+	rf.persist()
 	rf.rwmu.Unlock()
 }
 
@@ -75,4 +89,13 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	rf.PrintNow(fmt.Sprintf("sendRequestVote to:%d", server))
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
+}
+
+func (rf *Raft) up_to_date(indexB int, termB int) bool {
+	lastLogIndex, lastLogTerm := rf.lastLogIndexAndTerm()
+	if lastLogTerm != termB {
+		return lastLogTerm > termB
+	} else {
+		return lastLogIndex > indexB
+	}
 }

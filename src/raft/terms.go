@@ -62,12 +62,11 @@ func (rf *Raft) candidateTerm() {
 	peerNum := len(rf.peers)
 	grantedVote := 1
 	// 更新CANDIDATE raft信息
-	rf.currentTern++
 	rf.votedFor = rf.me
 	// request vote
 	lastLogIndex, lastTerm := rf.lastLogIndexAndTerm()
 	args := &RequestVoteArgs{
-		Term:         rf.currentTern,
+		Term:         rf.currentTern + 1, // 预选举
 		CandidateId:  rf.me,
 		LastLogIndex: lastLogIndex,
 		LastLogTerm:  lastTerm,
@@ -87,6 +86,7 @@ func (rf *Raft) candidateTerm() {
 			reply := &RequestVoteReply{}
 			rf.sendRequestVote(index, args, reply)
 			if reply.Term > rf.currentTern {
+				rf.currentTern = reply.Term
 				rf.changeTermTo(FOLLOWER)
 				return
 			}
@@ -110,6 +110,7 @@ func (rf *Raft) candidateTerm() {
 
 	rf.rwmu.Lock()
 	if rf.role == CANDIDATE && grantedVote > peerNum/2 {
+		rf.currentTern++
 		rf.changeTermTo(LEADER)
 	} else {
 		rf.changeTermTo(FOLLOWER)
@@ -127,8 +128,8 @@ func (rf *Raft) leaderTerm() {
 			for {
 				select {
 				case <-rf.heartbeatTimers[i].C:
-					rf.appendEntries(i)
 					rf.heartbeatTimers[i].Reset(HEARTBEAT_PERIOD)
+					rf.appendEntries(i)
 				}
 			}
 		}(idx)

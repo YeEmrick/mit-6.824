@@ -18,14 +18,12 @@ package raft
 //
 
 import (
-	"bytes"
 	"fmt"
 	"sync"
 	"time"
 )
 import "sync/atomic"
 import "labrpc"
-import "labgob"
 
 // import "bytes"
 // import "../labgob"
@@ -74,8 +72,8 @@ const (
 const (
 	TERM_PERIOD_MIN  = time.Millisecond * 300
 	TERM_PERIOD_MAX  = time.Millisecond * 600
-	HEARTBEAT_PERIOD = time.Millisecond * 10
-	APPLY_PERIOD     = time.Millisecond * 100
+	HEARTBEAT_PERIOD = time.Millisecond * 50
+	APPLY_PERIOD     = time.Millisecond * 10
 	RPC_TIMEOUT      = time.Millisecond * 100
 )
 
@@ -114,102 +112,6 @@ type Raft struct {
 	matchIndex []int
 }
 
-// return currentTerm and whether this server
-// believes it is the leader.
-func (rf *Raft) GetState() (int, bool) {
-	return rf.currentTern, rf.role == LEADER
-}
-
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTern)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.commitIndex)
-	e.Encode(rf.lastAppliedIndex)
-	e.Encode(rf.lastSnapshotIndex)
-	e.Encode(rf.lastSnapshotTerm)
-	e.Encode(rf.log)
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
-}
-
-//
-// restore previously persisted state.
-//
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 {
-		return
-	}
-	r := bytes.NewBuffer(data)
-	d := labgob.NewDecoder(r)
-	var CurrentTerm int
-	var VotedFor int
-	var CommitIndex int
-	var LastApplied int
-	var LastSnapshotIndex int
-	var LastSnapshotTerm int
-	var Log []Entry
-	d.Decode(&CurrentTerm)
-	d.Decode(&VotedFor)
-	d.Decode(&CommitIndex)
-	d.Decode(&LastApplied)
-	d.Decode(&LastSnapshotIndex)
-	d.Decode(&LastSnapshotTerm)
-	d.Decode(&Log)
-	rf.currentTern = CurrentTerm
-	rf.votedFor = VotedFor
-	rf.commitIndex = CommitIndex
-	rf.lastAppliedIndex = LastApplied
-	rf.lastSnapshotIndex = LastSnapshotIndex
-	rf.lastSnapshotTerm = LastSnapshotTerm
-	rf.log = Log
-}
-
-func (rf *Raft) up_to_date_or_eq(indexB int, termB int) bool {
-	if rf.currentTern >= termB {
-		return true
-	}
-	lastLogIndex, lastLogTerm := rf.lastLogIndexAndTerm()
-	if lastLogTerm != termB {
-		return lastLogTerm > termB
-	} else {
-		return lastLogIndex >= indexB
-	}
-}
-
-func (rf *Raft) lastLogIndexAndTerm() (int, int) {
-	if len(rf.log) == 0 {
-		return -1, rf.currentTern
-	}
-	term := rf.log[len(rf.log)-1].Term
-	index := rf.lastSnapshotIndex + len(rf.log)
-	return index, term
-}
-
-func (rf *Raft) getLocalLogIndex(idx int) int {
-	return idx - rf.lastSnapshotIndex - 1
-}
-
-func (rf *Raft) getLogByIndex(idx int) (Entry, bool) {
-	localIndex := rf.getLocalLogIndex(idx)
-	if localIndex < 0 || localIndex >= len(rf.log) {
-		return Entry{Index: -1, Term: 0}, false
-	} else {
-		return rf.log[localIndex], true
-	}
-}
-
-func (rf *Raft) PrintNow(info string) {
-	fmt.Printf("role:%v, Index:%v, Term:%v, CommitIndex:%v, AppliedIndex:%v, info:%v\n", getRoleString(rf.role), rf.me, rf.currentTern, rf.commitIndex, rf.lastAppliedIndex, info)
-}
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next Command to be appended to Raft's log. if this
@@ -230,7 +132,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term, isLeader := rf.GetState()
 	if isLeader {
-		rf.PrintNow(fmt.Sprintf("Start Command:%v", command))
 		lastIndex, _ := rf.lastLogIndexAndTerm()
 		index = lastIndex + 1
 		entry := Entry{
@@ -239,9 +140,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 		rf.log = append(rf.log, entry)
-		rf.nextIndex[rf.me] = index
-		rf.matchIndex[rf.me] = index - 1
-		//rf.persist()
+		rf.nextIndex[rf.me] = index + 1
+		rf.matchIndex[rf.me] = index
+		rf.PrintNow(fmt.Sprintf("Start Command:%v", command))
+		rf.persist()
 	}
 	return index, term, isLeader
 }
@@ -307,6 +209,8 @@ func (rf *Raft) runApplyLog() {
 				rf.applyCh <- ApplyMsg{CommandValid: true, CommandIndex: rf.lastAppliedIndex, Command: log.Command}
 			}
 		}
+		//rf.PrintNow("After Apply Log")
+		rf.persist()
 		rf.rwmu.RUnlock()
 		time.Sleep(APPLY_PERIOD)
 	}

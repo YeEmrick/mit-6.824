@@ -101,7 +101,7 @@ func TestBasicAgree2B(t *testing.T) {
 		}
 
 		xindex := cfg.one(index*100, servers, false)
-		if xindex != index {
+		if xindex != index-1 {
 			t.Fatalf("got Index %v but expected %v", xindex, index)
 		}
 	}
@@ -128,7 +128,7 @@ func TestRPCBytes2B(t *testing.T) {
 	for index := 2; index < iters+2; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
-		if xindex != index {
+		if xindex != index-1 {
 			t.Fatalf("got Index %v but expected %v", xindex, index)
 		}
 		sent += int64(len(cmd))
@@ -197,7 +197,7 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
 	}
-	if index != 2 {
+	if index != 2-1 {
 		t.Fatalf("expected Index 2, got %v", index)
 	}
 
@@ -220,7 +220,7 @@ func TestFailNoAgree2B(t *testing.T) {
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
 	}
-	if index2 < 2 || index2 > 3 {
+	if index2 < 2-1 || index2 > 3-1 {
 		t.Fatalf("unexpected Index %v", index2)
 	}
 

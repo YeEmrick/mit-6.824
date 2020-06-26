@@ -61,17 +61,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.NextIndex = expectedNextIndex
 	} else {
-		rf.PrintNow(fmt.Sprintf("Receive valid entries from %v, Term: %v, PrevLogIndex：%v", args.LeaderId, args.Term, args.PrevLogIndex))
+		rf.PrintNow(fmt.Sprintf("Receive valid entries from %v, Term: %v, PrevLogIndex：%v, LogLength:%v", args.LeaderId, args.Term, args.PrevLogIndex, len(args.Entries)))
 		reply.Success = true
 		localPrevIndex := rf.getLocalLogIndex(args.PrevLogIndex)
-		rf.log = append(rf.log[localPrevIndex+1:], args.Entries...)
+		rf.log = append(rf.log[:localPrevIndex+1], args.Entries...)
 		lastIndex, _ := rf.lastLogIndexAndTerm()
 		reply.NextIndex = lastIndex + 1
 		rf.nextIndex[rf.me] = lastIndex + 1
 		rf.matchIndex[rf.me] = lastIndex
-		rf.PrintNow(fmt.Sprintf("After Receive valid entries from %v, Term: %v, LogLength: %v", args.LeaderId, args.Term, len(rf.log)))
+		rf.PrintNow(fmt.Sprintf("After Receive valid entries from %v, Term: %v, ReplyMatchIndex:%v", args.LeaderId, args.Term, reply.NextIndex-1))
 	}
-	//rf.persist()
+	rf.persist()
 	return
 }
 
@@ -95,7 +95,6 @@ func (rf *Raft) consistenceCheck(prevIndex int, prevTerm int) (int, bool) {
 }
 
 func (rf *Raft) appendEntries(peerIdx int) {
-	rf.PrintNow(fmt.Sprintf("[BEGIN]appendEntries to %v", peerIdx))
 	var entries []Entry
 	rf.rwmu.RLock()
 	if rf.role != LEADER {
@@ -123,18 +122,21 @@ func (rf *Raft) appendEntries(peerIdx int) {
 	}
 	reply := AppendEntriesReply{}
 	rf.rwmu.RUnlock()
-	rf.peers[peerIdx].Call("Raft.AppendEntries", &args, &reply)
+
+	rf.PrintNow(fmt.Sprintf("[BEGIN]appendEntries to %v, AppendLogLen:%v", peerIdx, len(entries)))
+	ok := rf.peers[peerIdx].Call("Raft.AppendEntries", &args, &reply)
+	if !ok {
+		rf.PrintNow(fmt.Sprintf("[RPC ERROR]appendEntries to %v, AppendLogLen:%v", peerIdx, len(entries)))
+		return
+	}
 
 	// handle response
 	rf.rwmu.Lock()
 	if reply.Success {
+		rf.PrintNow(fmt.Sprintf("[SUCCESS]AppendEntries Reply,Peer{idx:%v, nextIdx:%v},Reply{NextIdx:%v,Term:%v}", peerIdx, rf.nextIndex[peerIdx], reply.NextIndex, reply.Term))
 		if reply.NextIndex > rf.nextIndex[peerIdx] {
 			rf.nextIndex[peerIdx] = reply.NextIndex
 			rf.matchIndex[peerIdx] = reply.NextIndex - 1
-		}
-		_, lastTerm := rf.lastLogIndexAndTerm()
-		// Paper 5.4 safety：只有最后log的term是当前term时，才commit
-		if lastTerm == rf.currentTern {
 			rf.updateCommitIndex()
 		}
 	} else {
@@ -145,11 +147,16 @@ func (rf *Raft) appendEntries(peerIdx int) {
 			rf.changeTermTo(FOLLOWER)
 		}
 	}
+	rf.persist()
 	rf.rwmu.Unlock()
 }
 
 func (rf *Raft) updateCommitIndex() {
-	lastIndex, _ := rf.lastLogIndexAndTerm()
+	lastIndex, lastTerm := rf.lastLogIndexAndTerm()
+	// Paper 5.4 safety：只有最后log的term是当前term时，才commit
+	if lastTerm != rf.currentTern {
+		return
+	}
 	for i := rf.commitIndex + 1; i <= lastIndex; i++ {
 		count := 0
 		for _, m := range rf.matchIndex {
@@ -157,11 +164,10 @@ func (rf *Raft) updateCommitIndex() {
 				count++
 			}
 		}
-		if count >= len(rf.peers)/2 {
+		if count > len(rf.peers)/2 {
 			rf.commitIndex = i
 		} else {
 			break
 		}
 	}
-	//todo:触发apply操作
 }
