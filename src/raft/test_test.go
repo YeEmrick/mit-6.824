@@ -70,7 +70,6 @@ func TestReElection2A(t *testing.T) {
 
 	// if there's no quorum, no leader should
 	// be elected.
-	fmt.Println("++++++++++++++++++++++++")
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
@@ -584,7 +583,7 @@ func TestPersist12C(t *testing.T) {
 	cfg.start1(leader2)
 	cfg.connect(leader2)
 
-	cfg.wait(4-1, servers, -1) // wait for leader2 to join before killing i3
+	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)
@@ -945,7 +944,7 @@ func internalChurn(t *testing.T, unreliable bool) {
 
 	really := make([]int, lastIndex+1)
 	for index := 1; index <= lastIndex; index++ {
-		v := cfg.wait(index-1, servers, -1)
+		v := cfg.wait(index, servers, -1)
 		if vi, ok := v.(int); ok {
 			really = append(really, vi)
 		} else {
