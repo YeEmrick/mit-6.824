@@ -5,6 +5,7 @@ const (
 	OK = iota
 	ErrNoKey
 	ErrWrongLeader
+	UnsupportedOpType
 )
 
 // Op
@@ -14,29 +15,33 @@ const (
 	Append
 )
 
-type ErrCode int
+type ErrorCode 	int
+type OpType		int
+type Key		string
+type Value		string
 
 // Put or Append
 type PutAppendArgs struct {
-	Key   string
-	Value string
-	Op    string // "Put" or "Append"
+	Key   Key
+	Value Value
+	Op    OpType // "Put" or "Append"
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
 
 type PutAppendReply struct {
-	Err ErrCode
+	ErrorCode ErrorCode
+	ErrorMsg  string
 }
 
 type GetArgs struct {
-	Key string
+	Key Key
 	// You'll have to add definitions here.
 }
 
 type GetReply struct {
-	Err    ErrCode
-	ErrMsg string
-	Value  string
+	ErrorCode ErrorCode
+	ErrorMsg  string
+	Value     Value
 }

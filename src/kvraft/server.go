@@ -4,6 +4,7 @@ import (
 	"../labgob"
 	"../labrpc"
 	"../raft"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -22,15 +23,15 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type  int
-	Key   string
-	Value string
+	Type  OpType
+	Key   Key
+	Value Value
 }
 
 type Result struct {
 	ErrorMsg  string
-	ErrorCode int
-	Value     string
+	ErrorCode ErrorCode
+	Value     Value
 }
 
 type KVServer struct {
@@ -47,10 +48,9 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
 	_, isLeader := kv.rf.GetState()
 	if isLeader == false {
-		reply.Err = ErrWrongLeader
+		reply.ErrorCode = ErrWrongLeader
 		return
 	}
 	op := Op{
@@ -62,10 +62,63 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	resCh := make(chan Result, 1)
 	kv.resultCh[index] = resCh
 	res := <-resCh
+	reply.ErrorCode = res.ErrorCode
+	reply.ErrorMsg = res.ErrorMsg
+	reply.Value = res.Value
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	if args.Op != Put && args.Op != Append {
+		reply.ErrorCode = UnsupportedOpType
+		reply.ErrorMsg = fmt.Sprintf("Op should be Put(%v) or Append(%v)", Put, Append)
+		return
+	}
+	_, isLeader := kv.rf.GetState()
+	if isLeader == false {
+		reply.ErrorCode = ErrWrongLeader
+		return
+	}
+	op := Op {
+		Type:  args.Op,
+		Key:   args.Key,
+		Value: args.Value,
+	}
+	index, _, _ := kv.rf.Start(op)
+	resCh := make(chan Result, 1)
+	kv.resultCh[index] = resCh
+	res := <-resCh
+	reply.ErrorCode = res.ErrorCode
+	reply.ErrorMsg = res.ErrorMsg
+}
+
+func (kv *KVServer) handleOp()  {
+	for {
+		applyResult := <-kv.applyCh
+		op := applyResult.Command.(Op)
+		switch op.Type {
+		case Get:
+			kv.handGet(applyResult)
+			break
+		case Put:
+			kv.handPut(applyResult)
+			break
+		case Append:
+			kv.handAppend(applyResult)
+			break
+		}
+	}
+}
+
+func (kv *KVServer) handGet(applyResult raft.ApplyMsg)  {
+
+}
+
+func (kv *KVServer) handPut(applyResult raft.ApplyMsg)  {
+
+}
+
+func (kv *KVServer) handAppend(applyResult raft.ApplyMsg)  {
+
 }
 
 //
