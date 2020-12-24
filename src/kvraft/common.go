@@ -1,12 +1,20 @@
 package kvraft
 
+// Error Code
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK = iota
+	ErrNoKey
+	ErrWrongLeader
 )
 
-type Err string
+// Op
+const (
+	Put = iota
+	Get
+	Append
+)
+
+type ErrCode int
 
 // Put or Append
 type PutAppendArgs struct {
@@ -19,7 +27,7 @@ type PutAppendArgs struct {
 }
 
 type PutAppendReply struct {
-	Err Err
+	Err ErrCode
 }
 
 type GetArgs struct {
@@ -28,6 +36,7 @@ type GetArgs struct {
 }
 
 type GetReply struct {
-	Err   Err
-	Value string
+	Err    ErrCode
+	ErrMsg string
+	Value  string
 }

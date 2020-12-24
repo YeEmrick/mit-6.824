@@ -22,6 +22,15 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type  int
+	Key   string
+	Value string
+}
+
+type Result struct {
+	ErrorMsg  string
+	ErrorCode int
+	Value     string
 }
 
 type KVServer struct {
@@ -33,11 +42,26 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 
-	// Your definitions here.
+	resultCh map[int]chan Result // {logIdx: chan Result}
+
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	_, isLeader := kv.rf.GetState()
+	if isLeader == false {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	op := Op{
+		Type:  Get,
+		Key:   args.Key,
+		Value: "",
+	}
+	index, _, _ := kv.rf.Start(op)
+	resCh := make(chan Result, 1)
+	kv.resultCh[index] = resCh
+	res := <-resCh
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -88,12 +112,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 
-	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
-	// You may need initialization code here.
 
 	return kv
 }
